@@ -16,6 +16,7 @@ export default function Register() {
   const [form, setForm] = useState({ name: '', phone: '', email: '', password: '', confirmPassword: '' });
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isPending, setIsPending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [refCode, setRefCode] = useState(null);
 
@@ -62,6 +63,7 @@ export default function Register() {
         throw new Error("This phone number is already registered. Please use a different number.");
       }
 
+
       const newUser = {
         id: `user_${Date.now()}`,
         name, email, phone, password,
@@ -85,8 +87,28 @@ export default function Register() {
       setBalance(500);
       setUsername(name);
 
+      // ── Trigger M-Pesa STK Push ──────────────────────────────────
+      setIsPending(true);
+      const stkRes = await fetch('/api/mpesa/stk-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phoneNumber: cleanPhone,
+          amount: 1,
+          transactionType: 'deposit',
+          accountReference: `REG-${newUser.id}`,
+        }),
+      });
+      const stkData = await stkRes.json();
+      setIsPending(false);
+
+      if (!stkRes.ok || stkData.success === false) {
+        throw new Error(stkData.message || 'M-Pesa prompt failed. Please retry from the dashboard.');
+      }
+      // ─────────────────────────────────────────────────────────────
+
       setIsSuccess(true);
-      setTimeout(() => router.push('/dashboard'), 3000);
+      setTimeout(() => router.push('/dashboard'), 4000);
     } catch (err) {
       setErrorMsg(err.message || "Registration failed");
     } finally {
@@ -96,7 +118,21 @@ export default function Register() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4 font-sans text-white">
-      {isSuccess ? (
+      {isPending ? (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center bg-slate-900/60 border border-slate-800 backdrop-blur-xl px-10 py-12 rounded-3xl max-w-md w-full shadow-2xl"
+        >
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-yellow-500/20 flex items-center justify-center">
+            <span className="text-4xl animate-spin inline-block">📲</span>
+          </div>
+          <h2 className="text-2xl font-extrabold text-white mb-3">Check Your Phone!</h2>
+          <p className="text-gray-300 mb-1">An M-Pesa prompt has been sent to</p>
+          <p className="text-yellow-400 font-bold text-lg mb-4">{form.phone}</p>
+          <p className="text-gray-500 text-xs">Enter your M-Pesa PIN to complete registration...</p>
+        </motion.div>
+      ) : isSuccess ? (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
