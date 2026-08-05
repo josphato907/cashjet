@@ -1,27 +1,36 @@
 import { NextResponse } from 'next/server';
 
+// ─── PayHero API configuration (hardcoded) ───────────────────────────────
+const PAYHERO_API_URL = 'https://backend.payhero.co.ke/api/v2/payments';
+const PAYHERO_API_USERNAME = 'Ib0onAMINnoCoRCzan7S';
+const PAYHERO_API_PASSWORD = 'imiDHUPd2XRa9xPA1UzFzrXubPgIjJu46LJGKl0e';
+const PAYHERO_CHANNEL_ID = '9323';                   // numeric or string
+const PAYHERO_CALLBACK_URL = 'https://yourdomain.com/api/payhero/callback';
+const BASIC_AUTH_TOKEN = ''; // optional — leave '' to use username/password instead
+// ──────────────────────────────────────────────────────────────────────────
+
 function normalizePhone(phone) {
   // Remove all non-digits
   let digits = phone.replace(/\D/g, '');
-  
+
   // Remove leading zeros
   while (digits.startsWith('0')) {
     digits = digits.substring(1);
   }
-  
+
   if (digits.startsWith('254')) {
     return digits;
   }
-  
+
   if (digits.length === 9 && (digits.startsWith('7') || digits.startsWith('1'))) {
     return '254' + digits;
   }
-  
+
   // fallback: if it doesn't match standard, prepending 254
   if (!digits.startsWith('254') && digits.length > 0) {
     return '254' + digits;
   }
-  
+
   return digits;
 }
 
@@ -40,15 +49,8 @@ export async function POST(request) {
       );
     }
 
-    const payheroUrl = process.env.PAYHERO_API_URL || 'https://backend.payhero.co.ke/api/v2/payments';
-    const username = process.env.PAYHERO_API_USERNAME;
-    const password = process.env.PAYHERO_API_PASSWORD;
-    const channelId = process.env.PAYHERO_CHANNEL_ID;
-    const callbackUrl = process.env.PAYHERO_CALLBACK_URL || '';
-    const basicAuthToken = process.env.BASIC_AUTH_TOKEN;
-
-    if (!channelId || (!basicAuthToken && (!username || !password))) {
-      console.error('[CashJet STK] Missing PayHero configuration environment variables');
+    if (!PAYHERO_CHANNEL_ID || (!BASIC_AUTH_TOKEN && (!PAYHERO_API_USERNAME || !PAYHERO_API_PASSWORD))) {
+      console.error('[CashJet STK] Missing PayHero configuration values');
       return NextResponse.json(
         { success: false, message: 'Payment gateway configuration is missing on the server.' },
         { status: 500 }
@@ -64,24 +66,24 @@ export async function POST(request) {
     }
 
     // Prepare authorization header
-    let authHeader = basicAuthToken;
-    if (!authHeader && username && password) {
-      authHeader = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+    let authHeader = BASIC_AUTH_TOKEN;
+    if (!authHeader && PAYHERO_API_USERNAME && PAYHERO_API_PASSWORD) {
+      authHeader = 'Basic ' + Buffer.from(`${PAYHERO_API_USERNAME}:${PAYHERO_API_PASSWORD}`).toString('base64');
     }
 
     const payload = {
       amount: Math.round(parseFloat(amount)),
       phone_number: phone,
-      channel_id: /^\d+$/.test(channelId) ? parseInt(channelId, 10) : channelId,
+      channel_id: /^\d+$/.test(PAYHERO_CHANNEL_ID) ? parseInt(PAYHERO_CHANNEL_ID, 10) : PAYHERO_CHANNEL_ID,
       provider: "m-pesa",
       external_reference: accountReference || `DEP-${Date.now()}`,
-      callback_url: callbackUrl,
+      callback_url: PAYHERO_CALLBACK_URL,
       description: transactionType === 'deposit' ? 'CashJet Deposit' : 'CashJet Withdrawal'
     };
 
     console.log('[CashJet STK] Sending PayHero payload:', { ...payload, phone_number: '***' });
 
-    const response = await fetch(payheroUrl, {
+    const response = await fetch(PAYHERO_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -96,7 +98,7 @@ export async function POST(request) {
     if (response.ok && data.success !== false) {
       const checkoutRequestId = data.CheckoutRequestID || data.checkoutRequestId || `ws_CO_${Date.now()}`;
       const merchantRequestId = data.MerchantRequestID || data.merchantRequestId || '';
-      
+
       console.log('[CashJet STK] STK Push successful:', { checkoutRequestId });
 
       return NextResponse.json({
@@ -134,4 +136,3 @@ export async function OPTIONS() {
     },
   });
 }
-
