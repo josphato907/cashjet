@@ -4,33 +4,19 @@ import { NextResponse } from 'next/server';
 const PAYHERO_API_URL = 'https://backend.payhero.co.ke/api/v2/payments';
 const PAYHERO_API_USERNAME = 'Ib0onAMINnoCoRCzan7S';
 const PAYHERO_API_PASSWORD = 'imiDHUPd2XRa9xPA1UzFzrXubPgIjJu46LJGKl0e';
-const PAYHERO_CHANNEL_ID = '9323';                   // numeric or string
+const PAYHERO_CHANNEL_ID = '9323';
 const PAYHERO_CALLBACK_URL = 'https://yourdomain.com/api/payhero/callback';
-const BASIC_AUTH_TOKEN = ''; // optional — leave '' to use username/password instead
+const BASIC_AUTH_TOKEN = '';
 // ──────────────────────────────────────────────────────────────────────────
 
 function normalizePhone(phone) {
-  // Remove all non-digits
   let digits = phone.replace(/\D/g, '');
-
-  // Remove leading zeros
   while (digits.startsWith('0')) {
     digits = digits.substring(1);
   }
-
-  if (digits.startsWith('254')) {
-    return digits;
-  }
-
-  if (digits.length === 9 && (digits.startsWith('7') || digits.startsWith('1'))) {
-    return '254' + digits;
-  }
-
-  // fallback: if it doesn't match standard, prepending 254
-  if (!digits.startsWith('254') && digits.length > 0) {
-    return '254' + digits;
-  }
-
+  if (digits.startsWith('254')) return digits;
+  if (digits.length === 9 && (digits.startsWith('7') || digits.startsWith('1'))) return '254' + digits;
+  if (!digits.startsWith('254') && digits.length > 0) return '254' + digits;
   return digits;
 }
 
@@ -41,12 +27,8 @@ export async function POST(request) {
 
     console.log('[CashJet STK] Initiating STK Push:', { phone: phoneNumber, amount, type: transactionType });
 
-    // Validate basic fields
     if (!phoneNumber || !amount || amount <= 0) {
-      return NextResponse.json(
-        { success: false, message: 'Invalid phone number or amount' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, message: 'Invalid phone number or amount' }, { status: 400 });
     }
 
     if (!PAYHERO_CHANNEL_ID || (!BASIC_AUTH_TOKEN && (!PAYHERO_API_USERNAME || !PAYHERO_API_PASSWORD))) {
@@ -65,7 +47,6 @@ export async function POST(request) {
       );
     }
 
-    // Prepare authorization header
     let authHeader = BASIC_AUTH_TOKEN;
     if (!authHeader && PAYHERO_API_USERNAME && PAYHERO_API_PASSWORD) {
       authHeader = 'Basic ' + Buffer.from(`${PAYHERO_API_USERNAME}:${PAYHERO_API_PASSWORD}`).toString('base64');
@@ -75,7 +56,7 @@ export async function POST(request) {
       amount: Math.round(parseFloat(amount)),
       phone_number: phone,
       channel_id: /^\d+$/.test(PAYHERO_CHANNEL_ID) ? parseInt(PAYHERO_CHANNEL_ID, 10) : PAYHERO_CHANNEL_ID,
-      provider: "m-pesa",
+      provider: 'm-pesa',
       external_reference: accountReference || `DEP-${Date.now()}`,
       callback_url: PAYHERO_CALLBACK_URL,
       description: transactionType === 'deposit' ? 'CashJet Deposit' : 'CashJet Withdrawal'
@@ -85,21 +66,26 @@ export async function POST(request) {
 
     const response = await fetch(PAYHERO_API_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': authHeader
-      },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type': 'application/json', 'Authorization': authHeader },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20000)
     });
 
     console.log('[CashJet STK] PayHero response status:', response.status);
-    const data = await response.json();
+
+    // Safe parse: never assume the body is JSON
+    const rawBody = await response.text();
+    let data = {};
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      data = { rawBody: rawBody.slice(0, 500), note: 'PayHero returned a non-JSON response' };
+    }
+    console.log('[CashJet STK] PayHero response body:', rawBody.slice(0, 1000));
 
     if (response.ok && data.success !== false) {
       const checkoutRequestId = data.CheckoutRequestID || data.checkoutRequestId || `ws_CO_${Date.now()}`;
       const merchantRequestId = data.MerchantRequestID || data.merchantRequestId || '';
-
-      console.log('[CashJet STK] STK Push successful:', { checkoutRequestId });
 
       return NextResponse.json({
         success: true,
@@ -109,13 +95,15 @@ export async function POST(request) {
       });
     } else {
       console.error('[CashJet STK] PayHero API Error:', data);
-      return NextResponse.json({
-        success: false,
-        message: data.message || data.ResponseDescription || 'Failed to send STK prompt. Please check your number and try again.',
-        detail: data
-      }, { status: response.status || 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          message: data.message || data.ResponseDescription || data.error || `PayHero responded with HTTP ${response.status}`,
+          detail: data
+        },
+        { status: response.status || 400 }
+      );
     }
-
   } catch (error) {
     console.error('[CashJet STK] Exception in STK Push:', error);
     return NextResponse.json(
